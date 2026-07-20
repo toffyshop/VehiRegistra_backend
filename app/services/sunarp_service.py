@@ -260,6 +260,7 @@ async def _consultar_proveedor(placa: str) -> dict | None:
                 headers={
                     "Authorization": f"Bearer {settings.SUNARP_API_TOKEN}",
                     "Accept": "application/json",
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
                 },
             )
             response.raise_for_status()
