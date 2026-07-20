@@ -20,7 +20,7 @@ from app.core.logging import logger
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("Iniciando %s (%s)", settings.PROJECT_NAME, settings.ENVIRONMENT)
 
-    await init_models()
+    # await init_models()  # <- Reemplazado por migraciones Alembic
     if settings.SEED_ON_STARTUP and not settings.is_production:
         from app.db.seed import seed_database
 
