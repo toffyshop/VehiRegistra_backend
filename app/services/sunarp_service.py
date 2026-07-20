@@ -136,16 +136,16 @@ def _deterministic_record(placa: str) -> dict:
 _CAMPOS: dict[str, tuple[str, ...]] = {
     "marca": ("marca", "brand", "vehiculo_marca"),
     "modelo": ("modelo", "model", "vehiculo_modelo"),
-    "anio": ("anio", "año", "anno", "year", "anio_fabricacion", "modelo_anio"),
+    "anio": ("ano_fab", "an_mode", "anio", "año", "anno", "year", "anio_fabricacion", "modelo_anio"),
     "color": ("color", "colour"),
-    "nro_motor": ("nro_motor", "numero_motor", "motor", "engine"),
-    "nro_serie": ("nro_serie", "numero_serie", "serie", "vin", "chasis"),
-    "categoria": ("categoria", "category", "clase", "tipo"),
-    "estado_registral": ("estado_registral", "estado", "situacion", "status"),
+    "nro_motor": ("num_motor", "nro_motor", "numero_motor", "motor", "engine"),
+    "nro_serie": ("num_serie", "no_vin", "nro_serie", "numero_serie", "serie", "vin", "chasis"),
+    "categoria": ("co_categ", "categoria", "category", "clase", "tipo"),
+    "estado_registral": ("estado", "estado_registral", "situacion", "status"),
 }
 _CAMPOS_PROPIETARIO: dict[str, tuple[str, ...]] = {
-    "nombre_completo": ("nombre_completo", "propietario", "titular", "nombre", "owner"),
-    "dni": ("dni", "documento", "nro_documento", "num_documento"),
+    "nombre_completo": ("propietario", "nombre_completo", "titular", "nombre", "owner"),
+    "dni": ("documento", "dni", "nro_documento", "num_documento"),
     "direccion": ("direccion", "domicilio", "address"),
 }
 
@@ -159,7 +159,7 @@ def _aplanar(payload: Any) -> dict[str, Any]:
     if not isinstance(payload, dict):
         return {}
 
-    for envoltura in ("data", "result", "resultado", "vehiculo"):
+    for envoltura in ("data", "result", "resultado", "vehiculo", "propietarios"):
         interno = payload.get(envoltura)
         if isinstance(interno, dict):
             payload = {**payload, **interno}
@@ -252,7 +252,8 @@ def _mapear_respuesta(payload: Any) -> dict | None:
 
 async def _consultar_proveedor(placa: str) -> dict | None:
     """Consulta HTTP al proveedor. Devuelve `None` ante cualquier fallo."""
-    url = f"{settings.SUNARP_API_URL.rstrip('/')}/{placa}"
+    placa_limpia = placa.replace("-", "")
+    url = f"{settings.SUNARP_API_URL.rstrip('/')}/{placa_limpia}"
     try:
         async with httpx.AsyncClient(timeout=settings.SUNARP_TIMEOUT_SECONDS) as client:
             response = await client.get(
