@@ -65,8 +65,20 @@ Al arrancar en modo `dev` se crean las tablas y se cargan datos de demostración
 |---------|----------|-------------------------|---------------|
 | FIS-001 | 70112233 | j.ramirez@muni.gob.pe   | `Fiscal2026!` |
 | FIS-002 | 70445566 | l.torres@muni.gob.pe    | `Fiscal2026!` |
+| FIS-100 | 88776655 | prueba@muni.gob.pe      | `Prueba2026!` |
 
-El login acepta **DNI, código o email** como `username`.
+* `POST /auth/login/json` → se inicia sesión con **email**.
+* `POST /auth/login` (OAuth2) → el campo `username` acepta **DNI, código o email**.
+
+### Crear más usuarios
+
+`seed.py` sólo actúa sobre una base vacía. Para dar de alta un fiscalizador en cualquier
+momento:
+
+```powershell
+python -m app.db.create_user --email fiscal@muni.gob.pe --password "Clave123!" `
+    --dni 12345678 --code FIS-010 --nombre "NOMBRE APELLIDO"
+```
 
 ### Conexión desde el emulador Android
 

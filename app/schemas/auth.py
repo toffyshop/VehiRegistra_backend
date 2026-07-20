@@ -1,6 +1,6 @@
 """Schemas de autenticación."""
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
 
 from app.schemas.user import UserRead
 
@@ -20,7 +20,11 @@ class TokenPayload(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    """Alternativa JSON al form-data de OAuth2 (útil desde el cliente móvil)."""
+    """Alternativa JSON al form-data de OAuth2 (útil desde el cliente móvil).
 
-    username: str = Field(..., description="DNI, código de fiscalizador o email")
+    A diferencia de `/auth/login`, que sigue el estándar OAuth2 y recibe el
+    campo `username`, aquí se inicia sesión con el correo electrónico.
+    """
+
+    email: EmailStr = Field(..., description="Correo institucional del fiscalizador")
     password: str = Field(..., min_length=1)

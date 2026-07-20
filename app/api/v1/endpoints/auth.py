@@ -49,8 +49,11 @@ async def login(
     },
 )
 async def login_json(session: SessionDep, payload: LoginRequest) -> Token:
-    """Variante JSON del login, más cómoda desde Retrofit/Kotlin."""
-    return await auth_service.login(session, payload.username, payload.password)
+    """Variante JSON del login con correo electrónico.
+
+    Más cómoda desde Retrofit/Kotlin que el form-urlencoded de OAuth2.
+    """
+    return await auth_service.login(session, payload.email, payload.password)
 
 
 @router.get(
