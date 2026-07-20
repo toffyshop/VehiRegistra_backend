@@ -1,0 +1,23 @@
+[project]
+name = "vehiregistro-api"
+version = "1.0.0"
+description = "API RESTful del Sistema de Fiscalización Municipal de Vehículos y Mototaxis"
+requires-python = ">=3.12"
+
+[tool.black]
+line-length = 100
+target-version = ["py312"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.12"
+plugins = []
+warn_unused_ignores = true
+disallow_untyped_defs = true
+ignore_missing_imports = true
