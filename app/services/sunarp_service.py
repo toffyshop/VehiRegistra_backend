@@ -1,23 +1,30 @@
-"""Servicio de consulta vehicular externa (SUNARP) — implementación mock.
+"""Servicio de consulta vehicular externa (SUNARP).
 
-Devuelve datos precargados para autocompletar el formulario de registro. Las
-placas no incluidas en el catálogo se generan de forma determinista a partir de
-la propia placa (misma entrada → misma salida), lo que permite demostrar la app
-sin depender de la disponibilidad del servicio real.
+Tiene dos modos, elegidos automáticamente según la configuración:
 
-Para conectar el servicio real: reemplazar el cuerpo de `_fetch_external` por la
-llamada HTTP (httpx.AsyncClient) hacia el proveedor y mapear su respuesta a
-`SunarpVehicleData`. El proxy Node existente (`VehiRegistra_backend/server.js`)
-ya consulta ese proveedor y sirve como referencia del formato.
+* **Real** — cuando hay `SUNARP_API_TOKEN`. Consulta por HTTP al proveedor
+  configurado en `SUNARP_API_URL` (el mismo que usaba el proxy Node de
+  `legacy_proxy/server.js`: `Authorization: Bearer <token>`).
+* **Mock** — sin token. Devuelve datos precargados y, para placas fuera del
+  catálogo, un registro derivado del hash de la placa (misma entrada → misma
+  salida). Permite demostrar la app sin depender del proveedor.
+
+Si el proveedor real falla y `SUNARP_FALLBACK_TO_MOCK` está activo, se responde
+con el mock para no bloquear el registro en campo; el campo `source` de la
+respuesta indica siempre de dónde salió el dato (`"sunarp"` o `"mock"`).
 """
 
 from datetime import datetime, timezone
 from hashlib import sha256
+from typing import Any
 
+import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.exceptions import NotFoundError
+from app.core.logging import logger
 from app.models.vehicle import Vehicle
 from app.schemas.sunarp import SunarpOwner, SunarpResponse, SunarpVehicleData
 from app.schemas.vehicle import normalize_placa
@@ -121,8 +128,173 @@ def _deterministic_record(placa: str) -> dict:
     }
 
 
+# --- Integración con el proveedor real -----------------------------------
+
+# Nombres alternativos con los que el proveedor puede exponer cada dato. Se
+# prueban en orden; el mapeo es tolerante porque el contrato exacto todavía no
+# está documentado (falta el token para inspeccionar una respuesta real).
+_CAMPOS: dict[str, tuple[str, ...]] = {
+    "marca": ("marca", "brand", "vehiculo_marca"),
+    "modelo": ("modelo", "model", "vehiculo_modelo"),
+    "anio": ("anio", "año", "anno", "year", "anio_fabricacion", "modelo_anio"),
+    "color": ("color", "colour"),
+    "nro_motor": ("nro_motor", "numero_motor", "motor", "engine"),
+    "nro_serie": ("nro_serie", "numero_serie", "serie", "vin", "chasis"),
+    "categoria": ("categoria", "category", "clase", "tipo"),
+    "estado_registral": ("estado_registral", "estado", "situacion", "status"),
+}
+_CAMPOS_PROPIETARIO: dict[str, tuple[str, ...]] = {
+    "nombre_completo": ("nombre_completo", "propietario", "titular", "nombre", "owner"),
+    "dni": ("dni", "documento", "nro_documento", "num_documento"),
+    "direccion": ("direccion", "domicilio", "address"),
+}
+
+
+def _aplanar(payload: Any) -> dict[str, Any]:
+    """Desenvuelve `{"data": {...}}` / `{"result": {...}}` y aplana un nivel.
+
+    Deja las claves en minúsculas para poder buscarlas sin importar cómo las
+    escriba el proveedor.
+    """
+    if not isinstance(payload, dict):
+        return {}
+
+    for envoltura in ("data", "result", "resultado", "vehiculo"):
+        interno = payload.get(envoltura)
+        if isinstance(interno, dict):
+            payload = {**payload, **interno}
+        elif isinstance(interno, list) and interno and isinstance(interno[0], dict):
+            payload = {**payload, **interno[0]}
+
+    plano: dict[str, Any] = {}
+    for clave, valor in payload.items():
+        clave_norm = str(clave).strip().lower()
+        if isinstance(valor, dict):
+            # Un nivel anidado (p. ej. {"propietario": {"nombre": ...}}).
+            plano[clave_norm] = valor
+            for sub_clave, sub_valor in valor.items():
+                plano.setdefault(str(sub_clave).strip().lower(), sub_valor)
+        else:
+            plano[clave_norm] = valor
+    return plano
+
+
+def _primero(plano: dict[str, Any], claves: tuple[str, ...]) -> Any:
+    """Primer valor escalar no vacío entre las claves candidatas.
+
+    Se descartan dicts y listas: una clave como "propietario" puede contener el
+    objeto anidado en vez del nombre, y ese objeto no es el valor buscado.
+    """
+    for clave in claves:
+        valor = plano.get(clave)
+        if isinstance(valor, dict | list):
+            continue
+        if valor not in (None, ""):
+            return valor
+    return None
+
+
+def _mapear_respuesta(payload: Any) -> dict | None:
+    """Traduce la respuesta del proveedor al formato interno.
+
+    Devuelve `None` si no se reconoce ni la marca ni el modelo: sin eso la
+    respuesta no sirve para autocompletar el formulario.
+    """
+    plano = _aplanar(payload)
+    if not plano:
+        return None
+
+    marca = _primero(plano, _CAMPOS["marca"])
+    modelo = _primero(plano, _CAMPOS["modelo"])
+    if marca is None and modelo is None:
+        return None
+
+    anio = _primero(plano, _CAMPOS["anio"])
+    try:
+        anio = int(str(anio)[:4]) if anio is not None else None
+    except (TypeError, ValueError):
+        anio = None
+
+    propietario_plano = plano
+    anidado = plano.get("propietario") or plano.get("titular")
+    if isinstance(anidado, dict):
+        propietario_plano = {
+            **plano,
+            **{str(k).strip().lower(): v for k, v in anidado.items()},
+        }
+
+    record: dict[str, Any] = {
+        "marca": str(marca or "").upper() or "NO DISPONIBLE",
+        "modelo": str(modelo or "").upper() or "NO DISPONIBLE",
+        "anio": anio,
+        "propietario": {
+            # El proveedor puede no devolver datos del titular: en ese caso el
+            # fiscalizador los completa a mano en el formulario.
+            "nombre_completo": str(
+                _primero(propietario_plano, _CAMPOS_PROPIETARIO["nombre_completo"])
+                or "NO DISPONIBLE"
+            ).upper(),
+            "dni": str(_primero(propietario_plano, _CAMPOS_PROPIETARIO["dni"]) or ""),
+            "direccion": _primero(
+                propietario_plano, _CAMPOS_PROPIETARIO["direccion"]
+            ),
+        },
+        # El proveedor de placas no expone alertas de robo: se marca en el padrón.
+        "alerta_robo": bool(_primero(plano, ("alerta_robo", "robo", "requisitoria"))),
+    }
+
+    for campo in ("color", "nro_motor", "nro_serie", "categoria", "estado_registral"):
+        valor = _primero(plano, _CAMPOS[campo])
+        record[campo] = str(valor).upper() if valor is not None else None
+
+    return record
+
+
+async def _consultar_proveedor(placa: str) -> dict | None:
+    """Consulta HTTP al proveedor. Devuelve `None` ante cualquier fallo."""
+    url = f"{settings.SUNARP_API_URL.rstrip('/')}/{placa}"
+    try:
+        async with httpx.AsyncClient(timeout=settings.SUNARP_TIMEOUT_SECONDS) as client:
+            response = await client.get(
+                url,
+                headers={
+                    "Authorization": f"Bearer {settings.SUNARP_API_TOKEN}",
+                    "Accept": "application/json",
+                },
+            )
+            response.raise_for_status()
+            record = _mapear_respuesta(response.json())
+    except httpx.HTTPStatusError as exc:
+        logger.warning(
+            "El proveedor respondió %s para la placa %s.",
+            exc.response.status_code,
+            placa,
+        )
+        return None
+    except (httpx.HTTPError, ValueError) as exc:
+        logger.warning("No se pudo consultar la placa %s: %s", placa, exc)
+        return None
+
+    if record is None:
+        logger.warning(
+            "La respuesta del proveedor para %s no trae marca ni modelo.", placa
+        )
+    return record
+
+
 async def _fetch_external(placa: str) -> tuple[dict, str]:
-    """Punto de integración. Hoy resuelve contra el catálogo mock."""
+    """Resuelve la placa contra el proveedor real o contra el catálogo mock."""
+    if settings.sunarp_enabled:
+        record = await _consultar_proveedor(placa)
+        if record is not None:
+            return record, "sunarp"
+        if not settings.SUNARP_FALLBACK_TO_MOCK:
+            raise NotFoundError(
+                "El servicio de consulta vehicular no está disponible en este momento.",
+                details={"placa": placa},
+            )
+        logger.info("Se responde con el catálogo simulado para la placa %s.", placa)
+
     if placa in _MOCK_DB:
         return _MOCK_DB[placa], "mock"
     return _deterministic_record(placa), "mock"

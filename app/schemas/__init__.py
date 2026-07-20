@@ -7,7 +7,6 @@ from app.schemas.dashboard import DashboardSummary, ReportStats, SystemStatus
 from app.schemas.inspection import InspectionCreate, InspectionRead
 from app.schemas.sunarp import SunarpResponse, SunarpVehicleData
 from app.schemas.user import (
-    ChangePasswordRequest,
     UserCreate,
     UserMetrics,
     UserProfile,
@@ -25,7 +24,6 @@ from app.schemas.vehicle import (
 __all__ = [
     "AssociationCreate",
     "AssociationRead",
-    "ChangePasswordRequest",
     "DashboardSummary",
     "ErrorResponse",
     "InspectionCreate",

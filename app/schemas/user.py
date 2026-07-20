@@ -1,9 +1,9 @@
 """Schemas del fiscalizador."""
 
 from datetime import datetime
-from typing import Annotated, Self
+from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 DNI = Annotated[str, Field(pattern=r"^\d{8}$", description="DNI peruano de 8 dígitos")]
 Phone = Annotated[str, Field(min_length=6, max_length=20)]
@@ -24,11 +24,17 @@ class UserCreate(UserBase):
 
 
 class UserUpdate(BaseModel):
-    """Campos editables del propio perfil. DNI y código son inmutables."""
+    """Campos editables del propio perfil.
+
+    DNI, código y teléfono son inmutables: los dos primeros identifican al
+    fiscalizador y el teléfono se retiró de la pantalla "Editar perfil" en el
+    diseño final. Un `phone` enviado por el cliente se ignora (`extra="ignore"`).
+    """
+
+    model_config = ConfigDict(extra="ignore")
 
     full_name: str | None = Field(default=None, min_length=3, max_length=160)
     email: EmailStr | None = None
-    phone: Phone | None = None
     area: str | None = Field(default=None, max_length=120)
 
 
@@ -54,17 +60,3 @@ class UserProfile(UserRead):
     """Perfil devuelto por GET /users/me."""
 
     metrics: UserMetrics
-
-
-class ChangePasswordRequest(BaseModel):
-    current_password: str = Field(..., min_length=1)
-    new_password: Password
-    confirm_password: Password
-
-    @model_validator(mode="after")
-    def _check_passwords(self) -> Self:
-        if self.new_password != self.confirm_password:
-            raise ValueError("La nueva contraseña y su confirmación no coinciden.")
-        if self.new_password == self.current_password:
-            raise ValueError("La nueva contraseña debe ser distinta de la actual.")
-        return self

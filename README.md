@@ -106,14 +106,44 @@ Todos requieren `Authorization: Bearer <token>` salvo `/auth/login`, `/health` y
 | Método | Ruta | Descripción |
 |---|---|---|
 | GET  | `/api/v1/users/me` | Perfil + `total_registros`, `total_fiscalizaciones`, `registros_mes_actual` |
-| PUT  | `/api/v1/users/me` | Editar perfil (parcial; `dni` y `code` son inmutables) |
-| POST | `/api/v1/users/me/change-password` | Cambio de contraseña |
+| PUT  | `/api/v1/users/me` | Editar perfil (parcial; `dni`, `code` y `phone` son inmutables) |
+
+> El cambio de contraseña se retiró de la app según el diseño final: no existe
+> endpoint para ello. Un restablecimiento se hace por vía administrativa.
 
 ### Dashboard y reportes
 | Método | Ruta | Descripción |
 |---|---|---|
 | GET | `/api/v1/dashboard/summary` | Inspecciones/registros de hoy, alertas, permisos por vencer, estado del sistema |
 | GET | `/api/v1/reports/stats` | Totales por estado, desglose por asociación y tipo de vehículo, inspecciones recientes |
+
+Contrato de `/reports/stats` para la pantalla "Reportes Estadísticos" (recortado):
+
+```json
+{
+  "total_registrados": 248,
+  "permisos_vigentes": 180,
+  "permisos_en_tramite": 25,
+  "permisos_vencidos": 43,
+  "total_inspecciones": 96,
+  "desglose_por_asociacion": [
+    { "asociacion_id": 1, "nombre": "Tambopata", "tipo_vehiculo": "MOTOTAXI",
+      "total": 123, "vigentes": 100, "vencidos": 23 }
+  ],
+  "desglose_por_estado": [
+    { "estado_permiso": "VIGENTE", "total": 180, "porcentaje": 72.58 }
+  ],
+  "desglose_por_tipo_vehiculo": [ { "tipo_vehiculo": "MOTOTAXI", "total": 190 } ],
+  "inspecciones_recientes": [],
+  "generated_at": "2026-07-20T15:30:00+00:00"
+}
+```
+
+Las tarjetas de la pantalla salen directas de `total_registrados`, `permisos_vigentes` y
+`permisos_vencidos`; la lista "Registros por asociación" de `desglose_por_asociacion`
+(`nombre` + `total`, con `vigentes`/`vencidos` disponibles si se quiere detallar). Los
+vehículos sin asociación aparecen agrupados con `asociacion_id: null` y nombre
+`"SIN ASOCIACIÓN"`.
 
 ### Integración SUNARP
 | Método | Ruta | Descripción |
@@ -180,18 +210,53 @@ Los **errores** siempre tienen la misma forma, generada por los handlers globale
 | 422 | Validación de esquema (placa/DNI mal formados, enum inválido, faltan campos) |
 | 500 / 502 | Error interno / servicio externo caído |
 
-## 🔌 Conectar el servicio SUNARP real
+## 🔌 Servicio SUNARP
 
-`app/services/sunarp_service.py` aísla la integración en `_fetch_external()`. Para usar el
-proveedor real (el mismo que consume `legacy_proxy/server.js`):
+`app/services/sunarp_service.py` ya implementa la llamada HTTP real con `httpx`. El modo se
+elige solo, según haya token o no:
 
-1. Añadir `httpx` a `requirements.txt` y `SUNARP_API_URL` / `SUNARP_API_TOKEN` a `config.py`.
-2. Reemplazar el cuerpo de `_fetch_external` por la llamada HTTP y mapear la respuesta al
-   diccionario que ya consume `consultar_placa`.
-3. Envolver los fallos de red en `ExternalServiceError` para que respondan 502 con el envelope
-   estándar.
+| `SUNARP_API_TOKEN` | Comportamiento | `source` en la respuesta |
+|---|---|---|
+| vacío (por defecto) | Catálogo simulado | `"mock"` |
+| definido | `GET {SUNARP_API_URL}/{PLACA}` con `Authorization: Bearer <token>` | `"sunarp"` |
 
-Ningún otro archivo necesita cambios.
+Si el proveedor falla (timeout, 4xx/5xx, JSON irreconocible) se responde con el mock para no
+bloquear el registro en campo. Con `SUNARP_FALLBACK_TO_MOCK=false` devuelve 404 en su lugar.
+`GET /dashboard/summary` refleja el modo activo en `system_status.sunarp_service`
+(`"online"` o `"mock"`).
+
+**Pendiente:** conseguir el token de `api2.consultadatos.com` (el proveedor que usaba
+`legacy_proxy/server.js`). Sin él no se pudo inspeccionar una respuesta verdadera, así que
+`_mapear_respuesta()` acepta varios nombres posibles para cada campo (`marca`/`brand`,
+`dni`/`documento`, envolturas `data`/`result`…). Cuando se tenga el JSON real, ajustar los
+diccionarios `_CAMPOS` / `_CAMPOS_PROPIETARIO` y añadir ese caso a
+`tests/test_sunarp_mapeo.py`.
+
+### Proveedores evaluados
+
+SUNARP **no publica una API oficial para terceros**: su consulta vehicular es un portal web
+gratuito con captcha (`consultavehicular.sunarp.gob.pe`), no automatizable de forma legítima.
+Los documentos con valor legal (copia literal S/ 5.00 por página, Certificado Registral
+Vehicular S/ 45.00) se piden por su canal propio. Por eso hay que pasar por un revendedor:
+
+| Proveedor | Notas |
+|---|---|
+| [ConsultaDatos](https://www.consultadatos.com/) | El que ya usaba el proxy Node. Placa, DNI, RUC, SOAT y licencias. Es el camino de menor fricción: la URL y el esquema de auth ya están en el código. |
+| [Verifica.id](https://verifica.id/consulta-vehicular-api/) | Devuelve JSON estructurado a partir del reporte PDF. |
+| [Verifik](https://verifik.co/en/verify-vehicle-license-plate-peru/) | Orientado a volumen alto (1.000+ consultas/mes); respuesta < 3 s. |
+
+Ninguno publica precios; hay que pedirlos por contacto directo. **Recomendación:** seguir con
+ConsultaDatos y conseguir el token, porque la integración ya está escrita para él.
+
+## 🧪 Pruebas
+
+```powershell
+pytest -q
+```
+
+Base SQLite en memoria por prueba: no tocan `vehiregistro.db` ni el seed. Cubren la búsqueda
+y los filtros de `GET /vehicles` (placa, DNI, propietario, marca, estado, alertas, paginación),
+el perfil del fiscalizador y el mapeo de la respuesta SUNARP.
 
 ## 🧪 Decisiones de diseño
 

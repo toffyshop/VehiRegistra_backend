@@ -10,7 +10,7 @@ from app.schemas.inspection import InspectionRead
 
 class SystemStatus(BaseModel):
     database: str = Field(..., examples=["online", "offline"])
-    sunarp_service: str = Field(..., examples=["online", "degraded"])
+    sunarp_service: str = Field(..., examples=["online", "mock", "degraded"])
     environment: str
     version: str
     server_time: datetime

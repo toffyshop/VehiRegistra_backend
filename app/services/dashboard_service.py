@@ -40,7 +40,8 @@ async def _estado_sistema(session: AsyncSession) -> SystemStatus:
 
     return SystemStatus(
         database=database,
-        sunarp_service="online",  # el mock siempre responde
+        # "mock" avisa a la app de que el dato vehicular es simulado.
+        sunarp_service="online" if settings.sunarp_enabled else "mock",
         environment=settings.ENVIRONMENT,
         version=settings.VERSION,
         server_time=datetime.now(timezone.utc),

@@ -41,6 +41,15 @@ class Settings(BaseSettings):
     PUBLIC_BASE_URL: str = "http://localhost:8000"
     STATIC_URL_PATH: str = "/static/uploads"
 
+    # --- Consulta vehicular externa (SUNARP) ------------------------------
+    # Proveedor usado por el proxy Node original (legacy_proxy/server.js).
+    # La placa se concatena al final de la URL: {SUNARP_API_URL}/{PLACA}
+    SUNARP_API_URL: str = "https://api2.consultadatos.com/api/placa/leyenda"
+    SUNARP_API_TOKEN: str = ""
+    SUNARP_TIMEOUT_SECONDS: float = 10.0
+    # Si el proveedor falla, responder con el catálogo simulado en vez de un error.
+    SUNARP_FALLBACK_TO_MOCK: bool = True
+
     # --- Bootstrap --------------------------------------------------------
     SEED_ON_STARTUP: bool = True
 
@@ -59,6 +68,11 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.ENVIRONMENT == "prod"
+
+    @property
+    def sunarp_enabled(self) -> bool:
+        """Sin token no hay integración real: el servicio queda en modo mock."""
+        return bool(self.SUNARP_API_TOKEN.strip())
 
 
 @lru_cache

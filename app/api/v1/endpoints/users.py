@@ -3,8 +3,8 @@
 from fastapi import APIRouter, status
 
 from app.api.deps import ActiveUserDep, SessionDep
-from app.schemas.common import ErrorResponse, Message
-from app.schemas.user import ChangePasswordRequest, UserProfile, UserRead, UserUpdate
+from app.schemas.common import ErrorResponse
+from app.schemas.user import UserProfile, UserRead, UserUpdate
 from app.services import user_service
 
 router = APIRouter()
@@ -35,29 +35,9 @@ async def update_me(
 ) -> UserRead:
     """Sólo se modifican los campos presentes en el cuerpo.
 
-    `dni` y `code` son inmutables: identifican al fiscalizador ante la municipalidad.
+    `dni`, `code` y `phone` son inmutables desde la app: los dos primeros
+    identifican al fiscalizador ante la municipalidad y el teléfono se retiró
+    de la pantalla de edición según el diseño final.
     """
     user = await user_service.update_profile(session, current_user, payload)
     return UserRead.model_validate(user)
-
-
-@router.post(
-    "/me/change-password",
-    response_model=Message,
-    status_code=status.HTTP_200_OK,
-    summary="Cambiar la contraseña propia",
-    responses={
-        status.HTTP_401_UNAUTHORIZED: {
-            "model": ErrorResponse, "description": "La contraseña actual es incorrecta"
-        },
-    },
-)
-async def change_password(
-    session: SessionDep, current_user: ActiveUserDep, payload: ChangePasswordRequest
-) -> Message:
-    await user_service.change_password(
-        session, current_user, payload.current_password, payload.new_password
-    )
-    return Message(
-        message="Contraseña actualizada correctamente. Vuelva a iniciar sesión."
-    )

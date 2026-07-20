@@ -3,8 +3,8 @@
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import ConflictError, NotFoundError, UnauthorizedError
-from app.core.security import hash_password, verify_password
+from app.core.exceptions import ConflictError, NotFoundError
+from app.core.security import hash_password
 from app.models.base import utcnow
 from app.models.inspection import Inspection
 from app.models.user import User
@@ -75,16 +75,6 @@ async def update_profile(
     await session.commit()
     await session.refresh(user)
     return user
-
-
-async def change_password(
-    session: AsyncSession, user: User, current_password: str, new_password: str
-) -> None:
-    if not verify_password(current_password, user.hashed_password):
-        raise UnauthorizedError("La contraseña actual es incorrecta.")
-
-    user.hashed_password = hash_password(new_password)
-    await session.commit()
 
 
 async def create_user(session: AsyncSession, payload: UserCreate) -> User:
